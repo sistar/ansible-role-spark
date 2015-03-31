@@ -14,19 +14,51 @@
   tags: ["packages","spark"]
 
 - name: ensure spark install dir exist and belong to spark user
+  sudo: yes
   file: state=directory path={{spark_install_dir}} owner={{spark_user}} group={{spark_group}} recurse=yes
   tags: ["packages","spark"]
+  when: compile_spark
 
-- name: retreive spark from git
-  sudo_user: "{{spark_user}}"
-  tags: packerio
-  git: > 
-     repo={{spark_repository}} dest={{spark_install_dir}} 
-     version={{spark_version}} update=yes depth=1 
-  environment: spark_environment
+- name: download precompiled spark
+  get_url: url=http://d3kbcqa49mib13.cloudfront.net/{{spark_binary}} dest=/tmp/{{spark_binary}} mode=0440
+  tags: ["packages","spark"]
+  when: not compile_spark
+
+- name: unpack precompiled spark
+  sudo: yes
+  unarchive: src=/tmp/{{spark_binary}} dest={{spark_install_base_dir}} copy=no group={{spark_group}} owner={{spark_user}}
+  tags: ["packages","spark"]
+  when: not compile_spark
+
+- name: symlink spark spark binary
+  sudo: yes
+  file: src={{spark_install_base_dir}}/{{spark_binary_name}} dest={{spark_install_dir}} owner={{spark_user}} group={{spark_group}} state=link force=yes
+  tags: ["packages","spark"]
+  when: not compile_spark
+
+- name: chown spark
+  sudo: yes
+  file: path={{spark_install_dir}} group={{spark_group}} owner={{spark_user}} recurse=yes mode=0755 state=directory
   tags: ["packages","spark"]
 
+- name: ensure known host
+  sudo: yes
+  shell: ssh-keyscan -H {{spark_repository_host}} >> /etc/ssh/ssh_known_hosts
+  environment: spark_environment
+  when: compile_spark
+  tags: packerio
+
+- name: retreive spark from git
+  sudo: yes
+  sudo_user: "{{spark_user}}"
+  git: repo={{spark_repository}} dest={{spark_install_dir}}
+       version={{spark_version}} update=yes depth=1
+  environment: spark_environment
+  tags: ["packerio","packages","spark"]
+  when: compile_spark
+
 - name: spark compilation
+  sudo: yes
   sudo_user: "{{spark_user}}"
   shell: "{{item}}"
   args:
@@ -36,19 +68,23 @@
      - mvn dependency:resolve
      - sbt/sbt assembly {{spark_compile_options}}
   tags: ["compilation","spark"]
+  when: compile_spark
 
 - name: configure spark
-  template: src={{item}}.j2 dest={{spark_install_dir}}/conf/{{item}} owner={{spark_user}}
+  sudo: yes
+  template: src={{item}}.j2 dest={{spark_install_dir}}/conf/{{item}} owner={{spark_user}} group={{spark_group}}
   with_items:
      - spark-defaults.conf
      - spark-env.sh
   tags: ["configuration","spark"]
 
 - name: add symlink for default spark version
+  sudo: yes
   file: state=link src={{spark_install_dir}} dest={{spark_link_dir}}
   tags: ["configuration","spark"]
 
 - name: configure spark env for user
+  sudo: yes
   template: src=spark.sh.j2 dest=/etc/profile.d/spark.sh
   tags: ["configuration","spark"]
 
